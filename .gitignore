@@ -1,0 +1,14 @@
+secrets.json
+build/
+test/
+cache/
+artifacts/
+node_modules/
+package-lock.json
+.idea/
+git .DS_Store
+contracts/.DS_Store
+.env
+db/
+old/
+scripts/*

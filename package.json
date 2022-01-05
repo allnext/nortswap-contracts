@@ -1,0 +1,38 @@
+{
+  "name": "nort-swap-smart-contracts",
+  "version": "1.0.0",
+  "description": "nort swap smart contracts",
+  "main": "index.js",
+  "scripts": {
+    "test": "hardhat test"
+  },
+  "keywords": [
+    "nort token",
+    "binance smart chain",
+    "bnb",
+    "bep20",
+    "solidity",
+    "pool",
+    "nort swap",
+    "smart contract"
+  ],
+  "author": "allnext",
+  "license": "MIT",
+  "devDependencies": {
+    "@nomiclabs/hardhat-ethers": "^2.0.1",
+    "@nomiclabs/hardhat-etherscan": "^2.1.7",
+    "@nomiclabs/hardhat-solpp": "^2.0.0",
+    "@nomiclabs/hardhat-waffle": "^2.0.1",
+    "chai": "^4.3.0",
+    "ethereum-waffle": "^3.2.2",
+    "ethers": "^5.0.31",
+    "hardhat": "^2.0.11"
+  },
+  "dependencies": {
+    "antlr4": "^4.8.0",
+    "axios": "^0.21.1",
+    "date-fn": "0.0.2",
+    "dayjs": "^1.10.4",
+    "ganache": "^7.0.0-beta.1"
+  }
+}
