@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.0;
+pragma solidity ^0.8;
 
 /*
  * NortTokenFinance
@@ -11,10 +11,10 @@ pragma solidity ^0.8.0;
  * GitHub:          https://github.com/allnext
  */
 
-import "./presets/SafeMath.sol";
-import "./presets/IBEP20.sol";
+import "./SafeMath.sol";
+import "./IBEP20.sol";
 import "./SafeBEP20.sol";
-import "./presets/Ownable.sol";
+import "./Ownable.sol";
 
 contract BEP20RewardNort is Ownable {
     using SafeMath for uint256;

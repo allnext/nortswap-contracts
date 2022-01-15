@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.0;
+pragma solidity ^0.8;
 
 /*
  * NortTokenFinance
@@ -11,10 +11,10 @@ pragma solidity ^0.8.0;
  * GitHub:          https://github.com/allnext
  */
 
-import "./presets/SafeMath.sol";
-import "./presets/IBEP20.sol";
+import "./SafeMath.sol";
+import "./IBEP20.sol";
 import "./SafeBEP20.sol";
-import "./presets/Ownable.sol";
+import "./Ownable.sol";
 
 contract BEP20RewardVault is Ownable {
     using SafeMath for uint256;
@@ -33,6 +33,7 @@ contract BEP20RewardVault is Ownable {
     struct IndicatorInfo {
         uint256 rewardDebt; // Reward debt. See explanation below.
         uint256 amount; // amount of client tokens locked
+        uint256 accRewardTokenPerShare; // Accumulated Rewards per share, times 1e30. See below.
     }
 
     // Info of each pool.
@@ -59,6 +60,9 @@ contract BEP20RewardVault is Ownable {
 
     // Keep track of number of tokens staked in case the contract earns reflect fees
     uint256 public totalStaked = 0;
+
+    // Keep track of number of tokens staked by referrals
+    uint256 public totalIndicationStaked = 0;
 
     // Bonus muliplier for early banana makers.
     uint256 public BONUS_MULTIPLIER;
@@ -139,48 +143,32 @@ contract BEP20RewardVault is Ownable {
     }
 
     // View function to see pending Reward on frontend.
-    function pendingReward(address _user) external view returns (uint256) {
+    function pendingReward(address _user) public view returns (uint256) {
         PoolInfo storage pool = poolInfo[0];
         UserInfo storage user = userInfo[_user];
-        IndicatorInfo storage indicator = indicatorInfo[_user];
         uint256 accRewardTokenPerShare = pool.accRewardTokenPerShare;
-        uint256 accRewardTokenPerShareIndicator = getIndicatorRewardPerShare(
-            _user
-        );
+
         if (block.number > pool.lastRewardBlock && totalStaked != 0) {
             uint256 multiplier = getMultiplier(
                 pool.lastRewardBlock,
                 block.number
             );
-            uint256 tokenReward = multiplier
-                .mul(rewardPerBlock)
-                .mul(pool.allocPoint)
-                .div(totalAllocPoint);
-            uint256 tokenRewardIndicator = multiplier
-                .mul(rewardIndicatorPerBlock)
-                .mul(pool.allocPoint)
-                .div(totalAllocPoint);
+            uint256 tokenReward = multiplier.mul(rewardPerBlock);
+
             accRewardTokenPerShare = accRewardTokenPerShare.add(
                 tokenReward.mul(1e30).div(totalStaked)
             );
-            if (indicator.amount > 0) {
-                accRewardTokenPerShareIndicator = accRewardTokenPerShareIndicator
-                    .add(tokenRewardIndicator.mul(1e30).div(indicator.amount));
-            }
         }
-        return
-            user
-                .amount
-                .mul(accRewardTokenPerShare)
-                .div(1e30)
-                .sub(user.rewardDebt)
-                .add(
-                    indicator
-                        .amount
-                        .mul(accRewardTokenPerShareIndicator)
-                        .div(1e30)
-                        .sub(indicator.rewardDebt)
-                );
+        uint256 userAmount = 0;
+        uint256 indicatorAmount = getIndicatorRewards(_user);
+
+        if (user.amount > 0) {
+            userAmount = user.amount.mul(accRewardTokenPerShare).div(1e30).sub(
+                user.rewardDebt
+            );
+        }
+
+        return userAmount.add(indicatorAmount);
     }
 
     // View function to see when user will be unlocked from pool
@@ -191,16 +179,17 @@ contract BEP20RewardVault is Ownable {
         return user.lastInteraction + pool.lockupDuration;
     }
 
-    // View function to see if user can harvest Solar.
+    // View function to see if user can harvest Nort.
     function canHarvest(address _user) public view returns (bool) {
         UserInfo storage user = userInfo[_user];
         return
-            block.number >= startBlock &&
-            block.timestamp >= user.nextHarvestUntil;
+            (block.number >= startBlock &&
+                block.timestamp >= user.nextHarvestUntil) ||
+            block.number >= bonusEndBlock;
     }
 
     // Update reward variables of the given pool to be up-to-date.
-    function updatePool(uint256 _pid) public {
+    function updatePool(uint256 _pid) internal {
         PoolInfo storage pool = poolInfo[_pid];
         if (block.number <= pool.lastRewardBlock) {
             return;
@@ -210,10 +199,7 @@ contract BEP20RewardVault is Ownable {
             return;
         }
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
-        uint256 tokenReward = multiplier
-            .mul(rewardPerBlock)
-            .mul(pool.allocPoint)
-            .div(totalAllocPoint);
+        uint256 tokenReward = multiplier.mul(rewardPerBlock);
         pool.accRewardTokenPerShare = pool.accRewardTokenPerShare.add(
             tokenReward.mul(1e30).div(totalStaked)
         );
@@ -238,16 +224,37 @@ contract BEP20RewardVault is Ownable {
             _indicator != msg.sender,
             "Deposit: indicator cannot be sender"
         );
+        require(block.number < bonusEndBlock, "Deposit: pool already ended");
         PoolInfo storage pool = poolInfo[0];
         UserInfo storage user = userInfo[msg.sender];
+        IndicatorInfo storage selfIndicator = indicatorInfo[msg.sender];
+        IndicatorInfo storage indicator = indicatorInfo[user.indicator];
         uint256 finalDepositAmount = 0;
+        if (selfIndicator.amount > 0) {
+            updateIndicatorRewardPerShare(msg.sender);
+        }
+        if (user.indicator == address(0) && _indicator != address(0)) {
+            updateIndicatorRewardPerShare(_indicator);
+        } else if (user.indicator != address(0)) {
+            updateIndicatorRewardPerShare(user.indicator);
+        }
         updatePool(0);
-        if (user.amount > 0) {
-            uint256 pending = user
+        if (user.amount > 0 || selfIndicator.amount > 0) {
+            uint256 pendingRewardAmountUser = user
                 .amount
                 .mul(pool.accRewardTokenPerShare)
                 .div(1e30)
                 .sub(user.rewardDebt);
+
+            uint256 pendingRewardAmountIndicator = selfIndicator
+                .amount
+                .mul(selfIndicator.accRewardTokenPerShare)
+                .div(1e30)
+                .sub(selfIndicator.rewardDebt);
+            uint256 pending = pendingRewardAmountUser.add(
+                pendingRewardAmountIndicator
+            );
+
             if (pending > 0) {
                 uint256 currentRewardBalance = rewardBalance();
                 if (currentRewardBalance > 0) {
@@ -266,14 +273,11 @@ contract BEP20RewardVault is Ownable {
             user.lastInteraction = block.timestamp;
             user.nextHarvestUntil = block.timestamp.add(pool.harvestInterval);
             if (user.indicator == address(0) && _indicator != address(0)) {
+                IndicatorInfo storage newIndicator = indicatorInfo[_indicator];
                 user.indicator = _indicator; //set indicator only if not has a indicator
-                indicatorInfo[_indicator].amount = indicatorInfo[_indicator]
-                    .amount
-                    .add(_amount); //create indicator client  list with client amount
-            } else if (_indicator != address(0)) {
-                indicatorInfo[_indicator].amount = indicatorInfo[_indicator]
-                    .amount
-                    .add(_amount); //create indicator client  list with client amount
+                newIndicator.amount = newIndicator.amount.add(_amount); //create indicator client  list with client amount
+            } else if (user.indicator != address(0)) {
+                indicator.amount = indicator.amount.add(_amount); //create indicator client  list with client amount
             }
             uint256 preStakeBalance = totalStakeTokenBalance();
             pool.lpToken.safeTransferFrom(
@@ -289,34 +293,33 @@ contract BEP20RewardVault is Ownable {
             1e30
         );
 
+        if (selfIndicator.amount > 0) {
+            selfIndicator.rewardDebt = selfIndicator
+                .amount
+                .mul(selfIndicator.accRewardTokenPerShare)
+                .div(1e30);
+        }
+
         emit Deposit(msg.sender, finalDepositAmount);
     }
 
-    /// Returns pending indicator rewards per share
+    /// Returns update indicator rewards per share
     /// @param _indicator The indicator address
-    function getIndicatorRewardPerShare(address _indicator)
-        public
-        view
-        returns (uint256)
-    {
+    function updateIndicatorRewardPerShare(address _indicator) internal {
         PoolInfo storage pool = poolInfo[0];
         IndicatorInfo storage indicator = indicatorInfo[_indicator];
-        uint256 accRewardTokenPerShareIndicator = 0;
-        if (indicator.amount > 0) {
-            uint256 multiplier = getMultiplier(
-                pool.lastRewardBlock,
-                block.number
-            );
-            uint256 tokenRewardIndicator = multiplier
-                .mul(rewardIndicatorPerBlock)
-                .mul(pool.allocPoint)
-                .div(totalAllocPoint);
 
-            accRewardTokenPerShareIndicator = tokenRewardIndicator
-                .mul(1e30)
-                .div(indicator.amount);
+        if (block.number <= pool.lastRewardBlock) {
+            return;
         }
-        return accRewardTokenPerShareIndicator;
+        if (totalStaked == 0 || indicator.amount == 0) {
+            return;
+        }
+        uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
+        uint256 tokenReward = multiplier.mul(rewardIndicatorPerBlock);
+        indicator.accRewardTokenPerShare = indicator.accRewardTokenPerShare.add(
+            tokenReward.mul(1e30).div(indicator.amount)
+        );
     }
 
     /// Returns pending indicator rewards
@@ -326,16 +329,31 @@ contract BEP20RewardVault is Ownable {
         view
         returns (uint256)
     {
+        PoolInfo storage pool = poolInfo[0];
         IndicatorInfo storage indicator = indicatorInfo[_indicator];
         uint256 pendingIndicator = 0;
-        uint256 accRewardTokenPerShareIndicator = getIndicatorRewardPerShare(
-            _indicator
-        );
+        uint256 accRewardTokenPerShare = indicator.accRewardTokenPerShare;
+
+        if (
+            block.number > pool.lastRewardBlock &&
+            totalStaked != 0 &&
+            indicator.amount != 0
+        ) {
+            uint256 multiplier = getMultiplier(
+                pool.lastRewardBlock,
+                block.number
+            );
+            uint256 tokenReward = multiplier.mul(rewardIndicatorPerBlock);
+
+            accRewardTokenPerShare = accRewardTokenPerShare.add(
+                tokenReward.mul(1e30).div(indicator.amount)
+            );
+        }
 
         if (indicator.amount > 0) {
             pendingIndicator = indicator
                 .amount
-                .mul(accRewardTokenPerShareIndicator)
+                .mul(accRewardTokenPerShare)
                 .div(1e30)
                 .sub(indicator.rewardDebt);
         }
@@ -348,6 +366,7 @@ contract BEP20RewardVault is Ownable {
     function withdraw(uint256 _amount) public {
         PoolInfo storage pool = poolInfo[0];
         UserInfo storage user = userInfo[msg.sender];
+        IndicatorInfo storage indicator = indicatorInfo[msg.sender];
         require(user.amount >= _amount, "withdraw: not good");
         //Cannot withdraw before lock time
         require(
@@ -358,65 +377,45 @@ contract BEP20RewardVault is Ownable {
             "Withdraw: you cannot withdraw yet"
         ); // only rewards
 
+        updateIndicatorRewardPerShare(msg.sender);
+        updateIndicatorRewardPerShare(user.indicator);
         updatePool(0);
 
-        uint256 pendingIndicator = getIndicatorRewards(msg.sender);
-        uint256 currentRewardBalance = rewardBalance();
-        if (pendingIndicator > 0) {
-            if (currentRewardBalance > 0) {
-                if (pendingIndicator > currentRewardBalance) {
-                    safeTransferReward(
-                        address(msg.sender),
-                        currentRewardBalance
-                    );
-                } else {
-                    safeTransferReward(address(msg.sender), pendingIndicator);
-                }
-            }
-        }
-
-        uint256 pending = user
+        uint256 pendingRewardAmountUser = user
             .amount
             .mul(pool.accRewardTokenPerShare)
             .div(1e30)
             .sub(user.rewardDebt);
-        if (pending > 0) {
-            pendingIndicator = getIndicatorRewards(user.indicator);
-            if (pendingIndicator > 0) {
-                currentRewardBalance = rewardBalance();
-                if (currentRewardBalance > 0) {
-                    if (pendingIndicator > currentRewardBalance) {
-                        safeTransferReward(
-                            address(msg.sender),
-                            currentRewardBalance
-                        );
-                    } else {
-                        safeTransferReward(
-                            address(msg.sender),
-                            pendingIndicator
-                        );
-                    }
-                }
-            }
+
+        uint256 pendingRewardAmountIndicator = indicator
+            .amount
+            .mul(indicator.accRewardTokenPerShare)
+            .div(1e30)
+            .sub(indicator.rewardDebt);
+        uint256 pendingRewardAmount = pendingRewardAmountUser.add(
+            pendingRewardAmountIndicator
+        );
+
+        uint256 currentRewardBalance = rewardBalance();
+        if (pendingRewardAmount > 0) {
             if (currentRewardBalance > 0) {
-                if (pending > currentRewardBalance) {
+                if (pendingRewardAmount > currentRewardBalance) {
                     safeTransferReward(
                         address(msg.sender),
                         currentRewardBalance
                     );
                 } else {
-                    safeTransferReward(address(msg.sender), pending);
+                    safeTransferReward(
+                        address(msg.sender),
+                        pendingRewardAmount
+                    );
                 }
             }
         }
+
         if (_amount > 0) {
             user.lastInteraction = block.timestamp;
             user.nextHarvestUntil = block.timestamp.add(pool.harvestInterval);
-            if (indicatorInfo[user.indicator].amount >= _amount) {
-                indicatorInfo[user.indicator].amount = indicatorInfo[
-                    user.indicator
-                ].amount.sub(_amount);
-            }
             user.amount = user.amount.sub(_amount);
             pool.lpToken.safeTransfer(address(msg.sender), _amount);
             totalStaked = totalStaked.sub(_amount);
@@ -425,14 +424,11 @@ contract BEP20RewardVault is Ownable {
         user.rewardDebt = user.amount.mul(pool.accRewardTokenPerShare).div(
             1e30
         );
-        if (user.indicator != address(0)) {
-            uint256 accRewardTokenPerShareIndicator = getIndicatorRewardPerShare(
-                    user.indicator
-                );
-
-            indicatorInfo[user.indicator].rewardDebt = indicatorInfo[
-                user.indicator
-            ].amount.mul(accRewardTokenPerShareIndicator).div(1e30);
+        if (indicator.amount != 0) {
+            indicator.rewardDebt = indicator
+                .amount
+                .mul(indicator.accRewardTokenPerShare)
+                .div(1e30);
         }
 
         emit Withdraw(msg.sender, _amount);
@@ -512,5 +508,13 @@ contract BEP20RewardVault is Ownable {
         // Withdraw rewards
         safeTransferReward(address(msg.sender), _amount);
         emit EmergencyRewardWithdraw(msg.sender, _amount);
+    }
+
+    /*
+     * @notice Stop rewards
+     * @dev Only callable by owner
+     */
+    function stopReward() external onlyOwner {
+        bonusEndBlock = block.number;
     }
 }

@@ -1,9 +1,9 @@
 /**SPDX-License-Identifier: MIT */
-pragma solidity ^0.8.0;
+pragma solidity ^0.8;
 
-import "./presets/IBEP20.sol";
-import "./presets/SafeMath.sol";
-import "./presets/Address.sol";
+import "./IBEP20.sol";
+import "./SafeMath.sol";
+import "./Address.sol";
 
 /**
  * @title SafeBEP20
