@@ -25,7 +25,7 @@ module.exports = {
   etherscan: {
     apiKey: etherScan,
   },
-  defaultNetwork: "bscmainnet",
+  defaultNetwork: "bsctestnet",
   networks: {
     bscmainnet: {
       url: "https://speedy-nodes-nyc.moralis.io/81e9989bff9efaefa71d2072/bsc/mainnet",
@@ -36,10 +36,10 @@ module.exports = {
       }
     },
     bsctestnet: {
-      url: "https://speedy-nodes-nyc.moralis.io/81e9989bff9efaefa71d2072/bsc/testnet",
-      chainId: 97,
+      url: "http://127.0.0.1:8545",
+      chainId: 56,
       gasPrice: 5000000000,
-      accounts: { mnemonic: mnemonicTest }
+      accounts: { mnemonic }
     }
   }
 };
